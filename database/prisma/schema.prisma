@@ -1,0 +1,26 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Bid {
+  id          String   @id @default(uuid())
+  bidId       String   @unique @map("bid_id")
+  title       String
+  organisation String
+  gemUrl      String   @map("gem_url")
+  value       Float?
+  closingDate String?  @map("closing_date")
+  isMsme      Boolean  @default(false) @map("is_msme")
+  isStartup   Boolean  @default(false) @map("is_startup")
+  keyword     String
+  docText     String?  @map("doc_text")
+  shortlisted Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("bids")
+}
