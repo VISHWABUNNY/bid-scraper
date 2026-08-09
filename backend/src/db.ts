@@ -8,6 +8,7 @@ const prisma = new PrismaClient();
 interface StoredBidRecord {
   id: string;
   bidId: string;
+  portal?: string;
   title: string;
   organisation: string;
   departmentName: string | null;
@@ -57,6 +58,7 @@ async function fallbackSaveBid(bid: GemBid & { shortlisted: boolean; docText?: s
   const record: StoredBidRecord = {
     id: existing?.id || `${bid.bidId}-${Date.now()}`,
     bidId: bid.bidId,
+    portal: bid.portal || 'GEM',
     title: bid.title,
     organisation: bid.organisation,
     departmentName: bid.departmentName ?? null,
@@ -85,6 +87,7 @@ export async function saveBid(bid: GemBid & { shortlisted: boolean; docText?: st
     await prisma.bid.upsert({
       where: { bidId: bid.bidId },
       update: {
+        portal: bid.portal || 'GEM',
         shortlisted: bid.shortlisted,
         docText: bid.docText ?? null,
         departmentName: bid.departmentName ?? null,
@@ -94,6 +97,7 @@ export async function saveBid(bid: GemBid & { shortlisted: boolean; docText?: st
       },
       create: {
         bidId: bid.bidId,
+        portal: bid.portal || 'GEM',
         title: bid.title,
         organisation: bid.organisation,
         departmentName: bid.departmentName ?? null,
@@ -116,16 +120,20 @@ export async function saveBid(bid: GemBid & { shortlisted: boolean; docText?: st
   }
 }
 
-export async function getShortlisted() {
+export async function getShortlisted(portal?: string) {
   try {
+    const whereClause: any = { shortlisted: true };
+    if (portal && portal !== 'ALL') {
+      whereClause.portal = portal;
+    }
     return await prisma.bid.findMany({
-      where: { shortlisted: true },
+      where: whereClause,
       orderBy: { createdAt: 'desc' },
     });
   } catch (error) {
     console.warn('[db] Prisma unavailable, reading JSON storage:', (error as Error).message);
     return Object.values(loadBidsFromDisk())
-      .filter((bid) => bid.shortlisted)
+      .filter((bid) => bid.shortlisted && (!portal || portal === 'ALL' || (bid.portal || 'GEM') === portal))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 }

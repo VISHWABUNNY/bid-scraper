@@ -116,6 +116,7 @@ button:disabled {
 .bid-card-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 1rem 1.5rem;
   background: linear-gradient(135deg, #161628 0%, #1a1a30 100%);
   border-bottom: 1px solid #222234;
@@ -131,6 +132,86 @@ button:disabled {
   border-radius: 6px;
   border: 1px solid #312e81;
   letter-spacing: 0.02em;
+}
+
+/* ── Multi-Portal Tabs Bar ── */
+.portal-bar {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.portal-tab {
+  padding: 0.55rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-radius: 8px;
+  background: #141422;
+  color: #94a3b8;
+  border: 1px solid #242436;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.portal-tab:hover {
+  background: #1a1a2e;
+  color: #f1f5f9;
+  border-color: #3b3b54;
+}
+
+.portal-tab--active {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.35);
+}
+
+/* ── Portal Badges ── */
+.portal-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.portal-badge--gem {
+  background: #1e1b4b;
+  color: #a78bfa;
+  border: 1px solid #3730a3;
+}
+
+.portal-badge--cppp {
+  background: #064e3b;
+  color: #34d399;
+  border: 1px solid #065f46;
+}
+
+.portal-badge--ap {
+  background: #78350f;
+  color: #fbbf24;
+  border: 1px solid #92400e;
+}
+
+.portal-badge--ts {
+  background: #831843;
+  color: #f472b6;
+  border: 1px solid #9d174d;
+}
+
+.portal-badge--mh {
+  background: #1e3a8a;
+  color: #60a5fa;
+  border: 1px solid #1e40af;
+}
+
+.portal-badge--up {
+  background: #701a75;
+  color: #e879f9;
+  border: 1px solid #86198f;
 }
 
 /* ── Structured detail rows ── */

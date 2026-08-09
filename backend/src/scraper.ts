@@ -1,7 +1,10 @@
 import { chromium, Browser, Page } from 'playwright';
 
+export type PortalType = 'GEM' | 'CPPP' | 'AP' | 'TS' | 'MH' | 'UP';
+
 export interface GemBid {
   bidId: string;
+  portal?: PortalType;
   title: string;
   organisation: string;
   departmentName: string | null;
@@ -27,7 +30,9 @@ export async function scrapeGemByKeywords(
     currentIndex: number;
     totalKeywords: number;
     remainingKeywords: number;
-  }) => void
+    currentPortal?: string;
+  }) => void,
+  portalType: PortalType = 'GEM'
 ): Promise<GemBid[]> {
   // Deduplicate input keywords cleanly
   const uniqueKeywords = Array.from(
@@ -57,25 +62,33 @@ export async function scrapeGemByKeywords(
           currentIndex: completedCount,
           totalKeywords: uniqueKeywords.length,
           remainingKeywords: uniqueKeywords.length - completedCount,
+          currentPortal: portalType,
         });
       }
 
-      console.log(`[Worker ${workerId}][${completedCount}/${uniqueKeywords.length}] Searching GeM for: "${keyword}"`);
+      console.log(`[Worker ${workerId}][${completedCount}/${uniqueKeywords.length}][${portalType}] Searching for: "${keyword}"`);
 
       try {
-        await page.goto('https://bidplus.gem.gov.in/all-bids', {
+        const targetUrl = portalType === 'CPPP' ? 'https://eprocure.gov.in/eprocure/app'
+          : portalType === 'AP' ? 'https://tender.apeprocurement.gov.in'
+          : portalType === 'TS' ? 'https://tender.telangana.gov.in'
+          : portalType === 'MH' ? 'https://mahatenders.gov.in'
+          : portalType === 'UP' ? 'https://etender.up.nic.in'
+          : 'https://bidplus.gem.gov.in/all-bids';
+
+        await page.goto(targetUrl, {
           waitUntil: 'domcontentloaded',
           timeout: 20000,
         });
 
-        await page.fill('input#searchBid, input[name="searchBid"], input[type="search"], input[placeholder*="Search"]', keyword);
-        await page.keyboard.press('Enter');
+        await page.fill('input#searchBid, input[name="searchBid"], input[type="search"], input[placeholder*="Search"], input[name="Keyword"]', keyword).catch(() => {});
+        await page.keyboard.press('Enter').catch(() => {});
 
         // Smart event-driven waiting: wait for cards to render instead of long fixed sleep
         await page.waitForSelector('.card, .result-card, tr, body', { timeout: 4000 }).catch(() => {});
         await page.waitForTimeout(300);
 
-        const bids = await page.evaluate((kw: string) => {
+        const bids = await page.evaluate(({ kw, portal }: { kw: string; portal: string }) => {
           const selectors = ['.card', '.result-card', '.search-result-item', '.bid-card', '.table-responsive table tr', 'tr'];
           const cardElements = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
 
@@ -98,15 +111,16 @@ export async function scrapeGemByKeywords(
               const text = rawText.replace(/[\u00a0\s]+/g, ' ').trim();
               const lowerText = text.toLowerCase();
 
-              const bidIdMatch = text.match(/GEM\/\d+\/[A-Z]\/\d+/i) || text.match(/GEM\d+/i);
+              const bidIdMatch = text.match(/GEM\/\d+\/[A-Z]\/\d+/i) || text.match(/(?:GEM|CPPP|AP|TS|MH|UP)\d+/i) || text.match(/\d{6,10}/);
               if (!bidIdMatch) return null;
-              const bidId = bidIdMatch[0];
+              const rawBidId = bidIdMatch[0];
+              const bidId = rawBidId.startsWith(portal) ? rawBidId : `${portal}/${rawBidId}`;
 
               const isLikelyUnrelated = /(electrical|furniture|door|window|pipe|tyre|vehicle|camera|container|compactor|locker|medical|sanitation|construction|civil|catering|housekeeping|security guard|water|road|building|table|chair|soap|towel|garment|jacket|cable|battery|transformer|meter)/i.test(lowerText);
               if (isLikelyUnrelated) return null;
 
-              const link = card.querySelector('a[href*="showbidDocument"], a[href*="/bid/"], a[href*="bid"], a') as HTMLAnchorElement | null;
-              const gemUrl = link?.href ? new URL(link.href, window.location.origin).href : 'https://bidplus.gem.gov.in/all-bids';
+              const link = card.querySelector('a[href*="showbidDocument"], a[href*="/bid/"], a[href*="tender"], a[href*="bid"], a') as HTMLAnchorElement | null;
+              const gemUrl = link?.href ? new URL(link.href, window.location.origin).href : window.location.href;
 
               let itemCategory: string | null = null;
               const itemMatch = text.match(/Items:\s*(.*?)(?=Quantity:|Department\s*Name|Start\s*Date:|End\s*Date:|$)/i);
@@ -134,8 +148,8 @@ export async function scrapeGemByKeywords(
                 }
               }
 
-              const organisation = deptText || 'Government Department';
-              const title = itemCategory || sanitize(text.slice(0, 160)) || 'IT Procurement Bid';
+              const organisation = deptText || `${portal} Department`;
+              const title = itemCategory || sanitize(text.slice(0, 160)) || `${portal} Procurement Tender`;
 
               let bidOpeningDate: string | null = null;
               const startMatch = text.match(/Start\s*Date:\s*(\d{2}-\d{2}-\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i);
@@ -162,6 +176,7 @@ export async function scrapeGemByKeywords(
 
               return {
                 bidId: bidId,
+                portal: portal as any,
                 title,
                 organisation,
                 departmentName,
@@ -177,7 +192,7 @@ export async function scrapeGemByKeywords(
               };
             })
             .filter(Boolean);
-        }, keyword);
+        }, { kw: keyword, portal: portalType });
 
         let count = 0;
         for (const bid of bids as GemBid[]) {
@@ -191,9 +206,9 @@ export async function scrapeGemByKeywords(
           }
         }
 
-        console.log(`[Worker ${workerId}]  → ${count} new bids extracted for "${keyword}"`);
+        console.log(`[Worker ${workerId}][${portalType}]  → ${count} new bids extracted for "${keyword}"`);
       } catch (err: any) {
-        console.error(`[Worker ${workerId}] Error scraping "${keyword}": ${err.message}`);
+        console.error(`[Worker ${workerId}][${portalType}] Error scraping "${keyword}": ${err.message}`);
       }
     }
   }
@@ -213,6 +228,31 @@ export async function scrapeGemByKeywords(
   }
 
   return allResults;
+}
+
+// Multi-portal master scraper function
+export async function scrapeMultiPortalsByKeywords(
+  portals: PortalType[],
+  keywords: string[],
+  onBidFound?: (bid: GemBid) => Promise<void>,
+  onProgress?: (info: {
+    currentKeyword: string;
+    currentIndex: number;
+    totalKeywords: number;
+    remainingKeywords: number;
+    currentPortal?: string;
+  }) => void
+): Promise<GemBid[]> {
+  const targetPortals: PortalType[] = portals.length > 0 ? portals : ['GEM'];
+  const allPortalResults: GemBid[] = [];
+
+  for (const portal of targetPortals) {
+    console.log(`\n=================== SCRAPING PORTAL: ${portal} ===================`);
+    const results = await scrapeGemByKeywords(keywords, onBidFound, onProgress, portal);
+    allPortalResults.push(...results);
+  }
+
+  return allPortalResults;
 }
 
 // Single keyword shortcut

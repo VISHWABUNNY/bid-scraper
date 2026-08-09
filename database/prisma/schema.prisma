@@ -10,6 +10,7 @@ datasource db {
 model Bid {
   id               String   @id @default(uuid())
   bidId            String   @unique @map("bid_id")
+  portal           String   @default("GEM")
   title            String
   organisation     String
   departmentName   String?  @map("department_name")

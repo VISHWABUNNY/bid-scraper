@@ -2,9 +2,12 @@ import { useState, useEffect } from 'react';
 
 const API = 'http://localhost:5000';
 
+type PortalKey = 'ALL' | 'GEM' | 'CPPP' | 'AP' | 'TS' | 'MH' | 'UP';
+
 interface Bid {
   id: string;
   bidId: string;
+  portal?: PortalKey;
   title: string;
   organisation: string;
   departmentName: string | null;
@@ -19,14 +22,26 @@ interface Bid {
   keyword: string;
 }
 
+const PORTALS: { key: PortalKey; label: string }[] = [
+  { key: 'ALL', label: '🌐 All Portals' },
+  { key: 'GEM', label: '🏛️ GeM Portal' },
+  { key: 'CPPP', label: '🇮🇳 CPPP Portal' },
+  { key: 'AP', label: '⚡ AP eProcurement' },
+  { key: 'TS', label: '🏛️ TS eProcurement' },
+  { key: 'MH', label: '🏢 MH MahaTenders' },
+  { key: 'UP', label: '🚩 UP eTender' },
+];
+
 export default function App() {
   const [bids, setBids] = useState<Bid[]>([]);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
+  const [activePortal, setActivePortal] = useState<PortalKey>('ALL');
 
-  async function fetchShortlisted() {
+  async function fetchShortlisted(portalKey: PortalKey = activePortal) {
     try {
-      const res = await fetch(`${API}/shortlisted`);
+      const url = portalKey && portalKey !== 'ALL' ? `${API}/shortlisted?portal=${portalKey}` : `${API}/shortlisted`;
+      const res = await fetch(url);
       const json = await res.json();
       if (json.success) setBids(json.data);
     } catch {
@@ -35,48 +50,63 @@ export default function App() {
   }
 
   useEffect(() => {
-    fetchShortlisted();
-  }, []);
+    fetchShortlisted(activePortal);
+  }, [activePortal]);
 
   async function runScrape() {
     setLoading(true);
-    setStatus('Initializing GeM portal scraper...');
+    const portalName = PORTALS.find((p) => p.key === activePortal)?.label || activePortal;
+    setStatus(`Launching scraper for ${portalName} in background...`);
 
-    // Poll backend progress every 800ms to show current keyword & remaining count in real time
+    try {
+      const res = await fetch(`${API}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portal: activePortal }),
+      });
+      const json = await res.json();
+      if (!json.success) {
+        setStatus(`Error: ${json.error || json.message}`);
+        setLoading(false);
+        return;
+      }
+    } catch {
+      setStatus('Failed to connect to scraper backend.');
+      setLoading(false);
+      return;
+    }
+
+    // Poll backend progress and stream live shortlisted bids every 800ms
     const progressInterval = setInterval(async () => {
       try {
         const res = await fetch(`${API}/progress`);
         const json = await res.json();
-        if (json.success && json.progress && json.progress.isScraping) {
+        if (json.success && json.progress) {
           const p = json.progress;
-          const kwText = p.currentKeyword ? `Searching GeM portal for: "${p.currentKeyword}"` : 'Searching GeM portal...';
-          const countText = p.totalKeywords > 0 ? ` (${p.currentIndex}/${p.totalKeywords})` : '';
-          const remainingText = p.remainingKeywords >= 0 ? ` — ${p.remainingKeywords} word${p.remainingKeywords !== 1 ? 's' : ''} left` : '';
-          const foundText = p.shortlistedCount > 0 ? ` [${p.shortlistedCount} shortlisted lead${p.shortlistedCount !== 1 ? 's' : ''} found so far]` : '';
 
-          setStatus(`${kwText}${countText}${remainingText}${foundText}`);
-          fetchShortlisted();
+          // Instantly refresh bid list on UI while scraping is active!
+          await fetchShortlisted(activePortal);
+
+          if (p.isScraping) {
+            const currentPortalLabel = p.currentPortal || activePortal;
+            const kwText = p.currentKeyword ? `Searching ${currentPortalLabel} for: "${p.currentKeyword}"` : `Searching ${currentPortalLabel}...`;
+            const countText = p.totalKeywords > 0 ? ` (${p.currentIndex}/${p.totalKeywords})` : '';
+            const remainingText = p.remainingKeywords >= 0 ? ` — ${p.remainingKeywords} word${p.remainingKeywords !== 1 ? 's' : ''} left` : '';
+            const foundText = p.shortlistedCount > 0 ? ` [${p.shortlistedCount} shortlisted lead${p.shortlistedCount !== 1 ? 's' : ''} live]` : '';
+
+            setStatus(`${kwText}${countText}${remainingText}${foundText}`);
+          } else {
+            // Background scraping complete!
+            clearInterval(progressInterval);
+            setLoading(false);
+            setStatus(`Scrape finished — checked keywords across portal(s), ${p.shortlistedCount} shortlisted leads found!`);
+            await fetchShortlisted(activePortal);
+          }
         }
       } catch {
-        // Ignore status poll error while main request completes
+        // Ignore status poll error
       }
     }, 800);
-
-    try {
-      const res = await fetch(`${API}/run`, { method: 'POST' });
-      const json = await res.json();
-      if (json.success) {
-        setStatus(`Scrape finished — checked all ${json.keywordsCount || ''} keywords, ${json.shortlisted} shortlisted leads found!`);
-        await fetchShortlisted();
-      } else {
-        setStatus(`Error: ${json.error}`);
-      }
-    } catch {
-      setStatus('Failed to connect to scraper backend.');
-    } finally {
-      clearInterval(progressInterval);
-      setLoading(false);
-    }
   }
 
   async function clearData() {
@@ -92,35 +122,52 @@ export default function App() {
         <div>
           <h1>TenderIQ Engine</h1>
           <p style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '0.2rem' }}>
-            Autonomous GeM Lead Finder & IT Document Evaluator
+            Multi-Portal Procurement Lead Finder & IT Evaluator (GeM · CPPP · AP · TS · MH · UP)
           </p>
         </div>
         <div className="controls">
           <button className="btn-clear" onClick={clearData} disabled={loading}>Clear Data</button>
           <button className="btn-run" onClick={runScrape} disabled={loading}>
-            {loading ? 'Scraping GeM...' : 'Run Scrape'}
+            {loading ? 'Scraping Portals...' : `Run Scrape (${activePortal})`}
           </button>
         </div>
       </header>
 
+      {/* Multi-portal Selection Tabs */}
+      <div className="portal-bar">
+        {PORTALS.map((portal) => (
+          <button
+            key={portal.key}
+            className={`portal-tab ${activePortal === portal.key ? 'portal-tab--active' : ''}`}
+            onClick={() => setActivePortal(portal.key)}
+            disabled={loading}
+          >
+            {portal.label}
+          </button>
+        ))}
+      </div>
+
       {status && <div className="status">{status}</div>}
 
       <div className="bid-count">
-        <strong>{bids.length}</strong> verified IT bid{bids.length !== 1 ? 's' : ''} available
+        <strong>{bids.length}</strong> verified IT bid{bids.length !== 1 ? 's' : ''} available on <strong>{activePortal}</strong> view
       </div>
 
       {bids.length === 0 ? (
         <div className="empty">
-          <h2>No shortlisted bids found yet</h2>
-          <p>Click "Run Scrape" above to search GeM portal using your keyword list.</p>
+          <h2>No shortlisted bids found for {activePortal} portal</h2>
+          <p>Click "Run Scrape ({activePortal})" above to search government procurement portals.</p>
         </div>
       ) : (
         <div className="bids-grid">
           {bids.map((bid) => (
             <div key={bid.id} className="bid-card">
-              {/* Card Header — Bid ID badge */}
+              {/* Card Header — Bid ID & Portal Badges */}
               <div className="bid-card-header">
                 <span className="bid-id-badge">{bid.bidId}</span>
+                <span className={`portal-badge portal-badge--${(bid.portal || 'GEM').toLowerCase()}`}>
+                  {bid.portal || 'GEM'} PORTAL
+                </span>
               </div>
 
               {/* Structured key-value details */}
@@ -161,14 +208,14 @@ export default function App() {
                 </div>
 
                 <div className="detail-row">
-                  <span className="detail-label">Searched Strings used in GeMARPTS</span>
+                  <span className="detail-label">Searched Strings used in Procurement</span>
                   <span className="detail-value">
                     <span className="tag tag-keyword">{bid.keyword}</span>
                   </span>
                 </div>
 
                 <div className="detail-row">
-                  <span className="detail-label">Searched Result generated in GeMARPTS</span>
+                  <span className="detail-label">Searched Result generated in Portal</span>
                   <span className="detail-value">{bid.title}</span>
                 </div>
 
@@ -202,7 +249,7 @@ export default function App() {
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  🔗 View on GeM ↗
+                  🔗 View Tender Document ({bid.portal || 'GEM'}) ↗
                 </a>
               </div>
             </div>
