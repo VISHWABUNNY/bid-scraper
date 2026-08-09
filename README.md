@@ -40,7 +40,7 @@
   - `MSME EMD Exempt`: Earnest Money Deposit waived for registered MSMEs.
   - `Startup Relaxed`: Prior turnover/experience criteria relaxed for DPIIT startups.
   - `Defence Bids`: Automatically highlights DRDO, Naval, or Military IT requirements.
-- **Custom Filters**: Filter by state, maximum budget (default: ≤ ₹20 Lakhs), or keywords (e.g. `dashboard`, `AI`, `cloud`, `ERP`).
+- **Custom Filters**: Filter by state, maximum budget (default: ≤ ₹20 Lakhs), or keywords (e.g. `dashboard`, `AI`, `cloud`, `).
 
 #### Step 3: Deep Dive & RFP Inspection (`/tenders/:id`)
 - **Organization & Department**: See exact government buying entity.

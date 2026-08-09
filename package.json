@@ -1,4 +1,10 @@
 {
+  "scripts": {
+    "install:all": "npm install --prefix backend && npm install --prefix frontend",
+    "dev": "node scripts/start-dev.js",
+    "setup:windows": "powershell -ExecutionPolicy Bypass -File setup.ps1",
+    "start:windows": "powershell -ExecutionPolicy Bypass -File setup.ps1 -SkipInstall"
+  },
   "devDependencies": {
     "prisma": "^5.22.0"
   },

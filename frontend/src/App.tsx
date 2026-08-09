@@ -7,9 +7,13 @@ interface Bid {
   bidId: string;
   title: string;
   organisation: string;
+  departmentName: string | null;
+  organisationName: string | null;
+  itemCategory: string | null;
   gemUrl: string;
   value: number | null;
   closingDate: string | null;
+  bidOpeningDate: string | null;
   isMsme: boolean;
   isStartup: boolean;
   keyword: string;
@@ -92,26 +96,83 @@ export default function App() {
         <div className="bids-grid">
           {bids.map((bid) => (
             <div key={bid.id} className="bid-card">
-              <div className="bid-header">
+              {/* Card Header — Bid ID badge */}
+              <div className="bid-card-header">
                 <span className="bid-id-badge">{bid.bidId}</span>
-                <span className="tag tag-keyword">Keyword: <strong>{bid.keyword}</strong></span>
               </div>
-              <h2 className="bid-title">{bid.title}</h2>
-              {bid.organisation && (
-                <div className="bid-org">
-                  🏢 <strong>Department:</strong> {bid.organisation}
-                </div>
-              )}
-              <div className="bid-meta">
-                {bid.closingDate && (
-                  <span className="tag tag-closing">
-                    ⏰ Closing: <strong>{bid.closingDate}</strong>
+
+              {/* Structured key-value details */}
+              <div className="bid-details">
+                <div className="detail-row">
+                  <span className="detail-label">Bid End Date/Time</span>
+                  <span className="detail-value detail-value--highlight">
+                    {bid.closingDate || '—'}
                   </span>
-                )}
-                {bid.isMsme && <span className="tag tag-msme">MSME</span>}
-                {bid.isStartup && <span className="tag tag-startup">Startup</span>}
-                {bid.value && <span className="tag tag-value">₹{bid.value}L</span>}
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Bid Opening Date/Time</span>
+                  <span className="detail-value">
+                    {bid.bidOpeningDate || '—'}
+                  </span>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Department Name</span>
+                  <span className="detail-value">
+                    {bid.departmentName || bid.organisation || '—'}
+                  </span>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Organisation Name</span>
+                  <span className="detail-value">
+                    {bid.organisationName || '—'}
+                  </span>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Item Category</span>
+                  <span className="detail-value">
+                    {bid.itemCategory || bid.title || '—'}
+                  </span>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Searched Strings used in GeMARPTS</span>
+                  <span className="detail-value">
+                    <span className="tag tag-keyword">{bid.keyword}</span>
+                  </span>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Searched Result generated in GeMARPTS</span>
+                  <span className="detail-value">{bid.title}</span>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">MSE Relaxation for Years of Experience and Turnover</span>
+                  <span className={`detail-value ${bid.isMsme ? 'detail-value--yes' : 'detail-value--no'}`}>
+                    {bid.isMsme ? 'Yes' : 'No'}
+                  </span>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Startup Relaxation for Years of Experience and Turnover</span>
+                  <span className={`detail-value ${bid.isStartup ? 'detail-value--yes' : 'detail-value--no'}`}>
+                    {bid.isStartup ? 'Yes' : 'No'}
+                  </span>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Project Value</span>
+                  <span className="detail-value detail-value--highlight">
+                    {bid.value ? `₹${bid.value} Lakh` : 'Not Disclosed'}
+                  </span>
+                </div>
               </div>
+
+              {/* Action buttons */}
               <div className="bid-actions">
                 <a
                   className="bid-btn btn-view"
@@ -119,16 +180,7 @@ export default function App() {
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  🔗 View Bid Document (GeM) ↗
-                </a>
-                <a
-                  className="bid-btn btn-download"
-                  href={bid.gemUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  download={`Bid_${bid.bidId.replace(/\//g, '_')}.pdf`}
-                >
-                  📥 Download PDF Document
+                  🔗 View on GeM ↗
                 </a>
               </div>
             </div>

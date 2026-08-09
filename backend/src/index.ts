@@ -12,6 +12,10 @@ const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173' }));
 app.use(express.json());
 
+app.get('/health', (_req, res) => {
+  res.json({ success: true, status: 'ok' });
+});
+
 // POST /run — scrape GeM across ALL keywords in Search keywords.md
 app.post('/run', async (_req, res) => {
   try {

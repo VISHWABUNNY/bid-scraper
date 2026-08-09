@@ -170,7 +170,7 @@ erDiagram
 
 | Criteria | Rule |
 |----------|------|
-| IT-related | Title must contain: software, web, mobile, app, portal, dashboard, AI, MIS, ERP, CRM, cloud, SaaS, etc. |
+| IT-related | Title must contain: software, web, mobile, app, portal, dashboard, AI, MIS, CRM, cloud, SaaS, etc. |
 | Value cap | ≤ ₹20 Lakh (if value is known) |
 | MSME / Startup | Must have MSME or Startup exemption mentioned |
 | Reject keywords | Rejects if title contains: construction, civil, electrical, supply of, furniture, printing, catering, manpower, housekeeping |

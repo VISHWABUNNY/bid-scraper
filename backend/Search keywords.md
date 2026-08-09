@@ -201,7 +201,7 @@ Workflow Automation System
 Document Management System (DMS)
 
 
-ERP Software Development
+Software Development
 
 
 CRM Software Development
@@ -281,7 +281,7 @@ Copy-paste combos:
 “E-Governance + Software Development”
 
 
-“ERP + Custom Software Development”
+“Custom Software Development”
 
 
 “SITC + Software + Implementation”
@@ -499,7 +499,7 @@ System Development
 Dashboard Development
 MIS Portal
 Digital Portal
-ERP Development
+Development
 Automation System
 Workflow Automation
 IT Services

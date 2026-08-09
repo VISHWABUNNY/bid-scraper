@@ -8,19 +8,23 @@ datasource db {
 }
 
 model Bid {
-  id          String   @id @default(uuid())
-  bidId       String   @unique @map("bid_id")
-  title       String
-  organisation String
-  gemUrl      String   @map("gem_url")
-  value       Float?
-  closingDate String?  @map("closing_date")
-  isMsme      Boolean  @default(false) @map("is_msme")
-  isStartup   Boolean  @default(false) @map("is_startup")
-  keyword     String
-  docText     String?  @map("doc_text")
-  shortlisted Boolean  @default(false)
-  createdAt   DateTime @default(now()) @map("created_at")
+  id               String   @id @default(uuid())
+  bidId            String   @unique @map("bid_id")
+  title            String
+  organisation     String
+  departmentName   String?  @map("department_name")
+  organisationName String?  @map("organisation_name")
+  itemCategory     String?  @map("item_category")
+  gemUrl           String   @map("gem_url")
+  value            Float?
+  closingDate      String?  @map("closing_date")
+  bidOpeningDate   String?  @map("bid_opening_date")
+  isMsme           Boolean  @default(false) @map("is_msme")
+  isStartup        Boolean  @default(false) @map("is_startup")
+  keyword          String
+  docText          String?  @map("doc_text")
+  shortlisted      Boolean  @default(false)
+  createdAt        DateTime @default(now()) @map("created_at")
 
   @@map("bids")
 }
