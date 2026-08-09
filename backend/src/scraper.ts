@@ -99,13 +99,13 @@ export async function scrapeGemByKeywords(
         await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
 
         // Try filling search input if present
-        const searchInputSelector =
-          'input#searchBid, input[name="searchBid"], input[type="search"], input[placeholder*="Search" i], input[name*="keyword" i]';
-        const hasSearch = await page.$(searchInputSelector).catch(() => null);
+        const searchInputSelector = 'input#searchBid, input[name="searchBid"], #searchBid, input[placeholder="Enter Keyword"], input[name="Keyword"]';
+        const searchInput = await page.$(searchInputSelector).catch(() => null);
 
-        if (hasSearch) {
-          await page.fill(searchInputSelector, keyword).catch(() => {});
+        if (searchInput) {
+          await searchInput.fill(keyword).catch(() => {});
           await page.keyboard.press('Enter').catch(() => {});
+          await page.waitForSelector('#bidCard .card, .card, .result-card, tr', { timeout: 6000 }).catch(() => {});
           await page.waitForTimeout(500);
         }
 
