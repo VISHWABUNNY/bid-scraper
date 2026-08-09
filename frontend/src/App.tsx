@@ -40,12 +40,33 @@ export default function App() {
 
   async function runScrape() {
     setLoading(true);
-    setStatus('Searching GeM portal for active IT bids across keywords...');
+    setStatus('Initializing GeM portal scraper...');
+
+    // Poll backend progress every 800ms to show current keyword & remaining count in real time
+    const progressInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API}/progress`);
+        const json = await res.json();
+        if (json.success && json.progress && json.progress.isScraping) {
+          const p = json.progress;
+          const kwText = p.currentKeyword ? `Searching GeM portal for: "${p.currentKeyword}"` : 'Searching GeM portal...';
+          const countText = p.totalKeywords > 0 ? ` (${p.currentIndex}/${p.totalKeywords})` : '';
+          const remainingText = p.remainingKeywords >= 0 ? ` — ${p.remainingKeywords} word${p.remainingKeywords !== 1 ? 's' : ''} left` : '';
+          const foundText = p.shortlistedCount > 0 ? ` [${p.shortlistedCount} shortlisted lead${p.shortlistedCount !== 1 ? 's' : ''} found so far]` : '';
+
+          setStatus(`${kwText}${countText}${remainingText}${foundText}`);
+          fetchShortlisted();
+        }
+      } catch {
+        // Ignore status poll error while main request completes
+      }
+    }, 800);
+
     try {
       const res = await fetch(`${API}/run`, { method: 'POST' });
       const json = await res.json();
       if (json.success) {
-        setStatus(`Scrape finished — checked bids, ${json.shortlisted} shortlisted leads found!`);
+        setStatus(`Scrape finished — checked all ${json.keywordsCount || ''} keywords, ${json.shortlisted} shortlisted leads found!`);
         await fetchShortlisted();
       } else {
         setStatus(`Error: ${json.error}`);
@@ -53,6 +74,7 @@ export default function App() {
     } catch {
       setStatus('Failed to connect to scraper backend.');
     } finally {
+      clearInterval(progressInterval);
       setLoading(false);
     }
   }

@@ -16,22 +16,51 @@ export interface GemBid {
   keyword: string;
 }
 
-// Scrape GeM across all provided keywords efficiently using a single browser instance.
+const CONCURRENCY = 3;
+
+// Scrape GeM across all provided keywords efficiently using parallel browser worker pages.
 export async function scrapeGemByKeywords(
   keywords: string[],
-  onBidFound?: (bid: GemBid) => Promise<void>
+  onBidFound?: (bid: GemBid) => Promise<void>,
+  onProgress?: (info: {
+    currentKeyword: string;
+    currentIndex: number;
+    totalKeywords: number;
+    remainingKeywords: number;
+  }) => void
 ): Promise<GemBid[]> {
+  // Deduplicate input keywords cleanly
+  const uniqueKeywords = Array.from(
+    new Set(keywords.map((k) => k.trim().toLowerCase()).filter(Boolean))
+  );
+
   const browser: Browser = await chromium.launch({ headless: true });
-  const page: Page = await browser.newPage();
   const allResults: GemBid[] = [];
   const seenIds = new Set<string>();
+  let completedCount = 0;
+  let queueIndex = 0;
 
-  try {
-    for (let i = 0; i < keywords.length; i++) {
-      const keyword = keywords[i].trim();
-      if (!keyword) continue;
+  async function scrapeWorker(workerId: number, page: Page) {
+    while (true) {
+      let currentIndex = 0;
+      let keyword = '';
 
-      console.log(`[${i + 1}/${keywords.length}] Searching GeM for: "${keyword}"`);
+      // Thread-safe index retrieval
+      if (queueIndex >= uniqueKeywords.length) break;
+      currentIndex = queueIndex++;
+      keyword = uniqueKeywords[currentIndex];
+
+      completedCount++;
+      if (onProgress) {
+        onProgress({
+          currentKeyword: keyword,
+          currentIndex: completedCount,
+          totalKeywords: uniqueKeywords.length,
+          remainingKeywords: uniqueKeywords.length - completedCount,
+        });
+      }
+
+      console.log(`[Worker ${workerId}][${completedCount}/${uniqueKeywords.length}] Searching GeM for: "${keyword}"`);
 
       try {
         await page.goto('https://bidplus.gem.gov.in/all-bids', {
@@ -41,14 +70,15 @@ export async function scrapeGemByKeywords(
 
         await page.fill('input#searchBid, input[name="searchBid"], input[type="search"], input[placeholder*="Search"]', keyword);
         await page.keyboard.press('Enter');
-        await page.waitForTimeout(1200);
-        await page.waitForLoadState('networkidle', { timeout: 7000 }).catch(() => {});
+
+        // Smart event-driven waiting: wait for cards to render instead of long fixed sleep
+        await page.waitForSelector('.card, .result-card, tr, body', { timeout: 4000 }).catch(() => {});
+        await page.waitForTimeout(300);
 
         const bids = await page.evaluate((kw: string) => {
           const selectors = ['.card', '.result-card', '.search-result-item', '.bid-card', '.table-responsive table tr', 'tr'];
           const cardElements = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
 
-          // Helper to strip label headers and trailing label sections from any extracted string
           const sanitize = (raw: string): string => {
             return raw
               .replace(/[\u00a0\s]+/g, ' ')
@@ -78,14 +108,12 @@ export async function scrapeGemByKeywords(
               const link = card.querySelector('a[href*="showbidDocument"], a[href*="/bid/"], a[href*="bid"], a') as HTMLAnchorElement | null;
               const gemUrl = link?.href ? new URL(link.href, window.location.origin).href : 'https://bidplus.gem.gov.in/all-bids';
 
-              // Extract & sanitize Item Category
               let itemCategory: string | null = null;
               const itemMatch = text.match(/Items:\s*(.*?)(?=Quantity:|Department\s*Name|Start\s*Date:|End\s*Date:|$)/i);
               if (itemMatch && itemMatch[1]) {
                 itemCategory = sanitize(itemMatch[1]);
               }
 
-              // Extract & sanitize Department text
               let deptText = '';
               const deptMatch = text.match(/Department\s*Name\s*And\s*Address:\s*(.*?)(?=Start\s*Date:|End\s*Date:|$)/i);
               if (deptMatch && deptMatch[1]) {
@@ -107,18 +135,14 @@ export async function scrapeGemByKeywords(
               }
 
               const organisation = deptText || 'Government Department';
-
-              // Title: clean item Category or title snippet
               const title = itemCategory || sanitize(text.slice(0, 160)) || 'IT Procurement Bid';
 
-              // Extract Start Date (Bid Opening Date)
               let bidOpeningDate: string | null = null;
               const startMatch = text.match(/Start\s*Date:\s*(\d{2}-\d{2}-\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i);
               if (startMatch) {
                 bidOpeningDate = startMatch[1].trim();
               }
 
-              // Extract End Date (Bid Closing Date)
               let closingDate: string | null = null;
               const endMatch = text.match(/End\s*Date:\s*(\d{2}-\d{2}-\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i);
               if (endMatch) {
@@ -167,18 +191,23 @@ export async function scrapeGemByKeywords(
           }
         }
 
-        if (count === 0) {
-          const fallbackText = await page.textContent('body').catch(() => '');
-          if (fallbackText && /gem|bid|tender|service|portal|software/i.test(fallbackText)) {
-            console.log(`  → no structured cards matched, but page content suggests results are present for "${keyword}"`);
-          }
-        }
-
-        console.log(`  → ${count} new bids extracted for "${keyword}"`);
+        console.log(`[Worker ${workerId}]  → ${count} new bids extracted for "${keyword}"`);
       } catch (err: any) {
-        console.error(`  Error scraping "${keyword}": ${err.message}`);
+        console.error(`[Worker ${workerId}] Error scraping "${keyword}": ${err.message}`);
       }
     }
+  }
+
+  try {
+    const workerPromises: Promise<void>[] = [];
+    const numWorkers = Math.min(CONCURRENCY, uniqueKeywords.length);
+
+    for (let w = 1; w <= numWorkers; w++) {
+      const page = await browser.newPage();
+      workerPromises.push(scrapeWorker(w, page));
+    }
+
+    await Promise.all(workerPromises);
   } finally {
     await browser.close();
   }
