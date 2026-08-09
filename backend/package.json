@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "test": "jest --config jest.config.json",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate"
   },
@@ -16,8 +17,11 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.12",
     "@types/node": "^20.14.2",
+    "jest": "^29.7.0",
     "prisma": "^5.13.0",
+    "ts-jest": "^29.1.4",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.4.5"

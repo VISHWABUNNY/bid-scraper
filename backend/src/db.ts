@@ -28,6 +28,8 @@ interface StoredBidRecord {
 
 const STORE_PATH = path.resolve(__dirname, '../data/bids.json');
 let cachedBids: Record<string, StoredBidRecord> | null = null;
+let saveDebounceTimer: NodeJS.Timeout | null = null;
+let isWritingDisk = false;
 
 function loadBidsFromDisk(): Record<string, StoredBidRecord> {
   if (cachedBids) return cachedBids;
@@ -47,9 +49,22 @@ function loadBidsFromDisk(): Record<string, StoredBidRecord> {
   return cachedBids;
 }
 
-function persistBidsToDisk(bids: Record<string, StoredBidRecord>) {
-  fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
-  fs.writeFileSync(STORE_PATH, JSON.stringify(bids, null, 2));
+// Non-blocking debounced asynchronous disk persistence
+function scheduleDiskPersist(bids: Record<string, StoredBidRecord>) {
+  if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
+
+  saveDebounceTimer = setTimeout(async () => {
+    if (isWritingDisk) return;
+    isWritingDisk = true;
+    try {
+      await fs.promises.mkdir(path.dirname(STORE_PATH), { recursive: true });
+      await fs.promises.writeFile(STORE_PATH, JSON.stringify(bids, null, 2), 'utf8');
+    } catch (err: any) {
+      console.warn('[db] Async disk write error:', err.message);
+    } finally {
+      isWritingDisk = false;
+    }
+  }, 300);
 }
 
 async function fallbackSaveBid(bid: GemBid & { shortlisted: boolean; docText?: string }) {
@@ -78,7 +93,7 @@ async function fallbackSaveBid(bid: GemBid & { shortlisted: boolean; docText?: s
 
   store[bid.bidId] = record;
   cachedBids = store;
-  persistBidsToDisk(store);
+  scheduleDiskPersist(store);
   return record;
 }
 
@@ -114,8 +129,7 @@ export async function saveBid(bid: GemBid & { shortlisted: boolean; docText?: st
         shortlisted: bid.shortlisted,
       },
     });
-  } catch (error) {
-    console.warn('[db] Prisma unavailable, falling back to JSON storage:', (error as Error).message);
+  } catch {
     await fallbackSaveBid(bid);
   }
 }
@@ -130,8 +144,7 @@ export async function getShortlisted(portal?: string) {
       where: whereClause,
       orderBy: { createdAt: 'desc' },
     });
-  } catch (error) {
-    console.warn('[db] Prisma unavailable, reading JSON storage:', (error as Error).message);
+  } catch {
     return Object.values(loadBidsFromDisk())
       .filter((bid) => bid.shortlisted && (!portal || portal === 'ALL' || (bid.portal || 'GEM') === portal))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -141,12 +154,12 @@ export async function getShortlisted(portal?: string) {
 export async function clearAll() {
   try {
     await prisma.bid.deleteMany();
-  } catch (error) {
-    console.warn('[db] Prisma unavailable while clearing data:', (error as Error).message);
+  } catch {
+    // Ignore if Prisma offline
   }
 
   cachedBids = {};
-  persistBidsToDisk({});
+  scheduleDiskPersist({});
 }
 
 export { prisma };

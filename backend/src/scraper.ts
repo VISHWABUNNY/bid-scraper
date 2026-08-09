@@ -19,9 +19,14 @@ export interface GemBid {
   keyword: string;
 }
 
-const CONCURRENCY = 3;
+const CONCURRENCY = 2;
 
-// Scrape GeM across all provided keywords efficiently using parallel browser worker pages.
+// Stealth user agents for browser automation
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+];
+
 export async function scrapeGemByKeywords(
   keywords: string[],
   onBidFound?: (bid: GemBid) => Promise<void>,
@@ -34,26 +39,35 @@ export async function scrapeGemByKeywords(
   }) => void,
   portalType: PortalType = 'GEM'
 ): Promise<GemBid[]> {
-  // Deduplicate input keywords cleanly
   const uniqueKeywords = Array.from(
-    new Set(keywords.map((k) => k.trim().toLowerCase()).filter(Boolean))
+    new Set(keywords.map((k) => k.trim().toLowerCase()).filter((k) => k.length >= 2))
   );
 
-  const browser: Browser = await chromium.launch({ headless: true });
+  const browser: Browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+    ],
+  });
+
   const allResults: GemBid[] = [];
   const seenIds = new Set<string>();
   let completedCount = 0;
   let queueIndex = 0;
 
   async function scrapeWorker(workerId: number, page: Page) {
-    while (true) {
-      let currentIndex = 0;
-      let keyword = '';
+    // Set stealth headers and viewport
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    });
 
-      // Thread-safe index retrieval
+    while (true) {
       if (queueIndex >= uniqueKeywords.length) break;
-      currentIndex = queueIndex++;
-      keyword = uniqueKeywords[currentIndex];
+      const currentIndex = queueIndex++;
+      const keyword = uniqueKeywords[currentIndex];
 
       completedCount++;
       if (onProgress) {
@@ -69,130 +83,141 @@ export async function scrapeGemByKeywords(
       console.log(`[Worker ${workerId}][${completedCount}/${uniqueKeywords.length}][${portalType}] Searching for: "${keyword}"`);
 
       try {
-        const targetUrl = portalType === 'CPPP' ? 'https://eprocure.gov.in/eprocure/app'
-          : portalType === 'AP' ? 'https://tender.apeprocurement.gov.in'
-          : portalType === 'TS' ? 'https://tender.telangana.gov.in'
-          : portalType === 'MH' ? 'https://mahatenders.gov.in'
-          : portalType === 'UP' ? 'https://etender.up.nic.in'
-          : 'https://bidplus.gem.gov.in/all-bids';
+        const targetUrl =
+          portalType === 'CPPP'
+            ? 'https://eprocure.gov.in/eprocure/app'
+            : portalType === 'AP'
+            ? 'https://tender.apeprocurement.gov.in'
+            : portalType === 'TS'
+            ? 'https://tender.telangana.gov.in'
+            : portalType === 'MH'
+            ? 'https://mahatenders.gov.in'
+            : portalType === 'UP'
+            ? 'https://etender.up.nic.in'
+            : 'https://bidplus.gem.gov.in/all-bids';
 
-        await page.goto(targetUrl, {
-          waitUntil: 'domcontentloaded',
-          timeout: 20000,
-        });
+        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
 
-        await page.fill('input#searchBid, input[name="searchBid"], input[type="search"], input[placeholder*="Search"], input[name="Keyword"]', keyword).catch(() => {});
-        await page.keyboard.press('Enter').catch(() => {});
+        // Try filling search input if present
+        const searchInputSelector =
+          'input#searchBid, input[name="searchBid"], input[type="search"], input[placeholder*="Search" i], input[name*="keyword" i]';
+        const hasSearch = await page.$(searchInputSelector).catch(() => null);
 
-        // Smart event-driven waiting: wait for cards to render instead of long fixed sleep
-        await page.waitForSelector('.card, .result-card, tr, body', { timeout: 4000 }).catch(() => {});
-        await page.waitForTimeout(300);
+        if (hasSearch) {
+          await page.fill(searchInputSelector, keyword).catch(() => {});
+          await page.keyboard.press('Enter').catch(() => {});
+          await page.waitForTimeout(500);
+        }
 
-        const bids = await page.evaluate(({ kw, portal }: { kw: string; portal: string }) => {
-          const selectors = ['.card', '.result-card', '.search-result-item', '.bid-card', '.table-responsive table tr', 'tr'];
-          const cardElements = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
+        const bids = await page.evaluate(
+          ({ kw, portal }: { kw: string; portal: string }) => {
+            const cardSelectors = [
+              '.card',
+              '.result-card',
+              '.search-result-item',
+              '.bid-card',
+              'tr',
+            ];
+            const elements = cardSelectors.flatMap((sel) =>
+              Array.from(document.querySelectorAll(sel))
+            );
 
-          const sanitize = (raw: string): string => {
-            return raw
-              .replace(/[\u00a0\s]+/g, ' ')
-              .replace(/BID\s*NO:.*?(?=Items:|Department|Quantity|Start|$)/gi, '')
-              .replace(/View\s*Corrigendum\/Representation/gi, '')
-              .replace(/Quantity:.*$/gi, '')
-              .replace(/Department\s*Name\s*And\s*Address:.*$/gi, '')
-              .replace(/Start\s*Date:.*$/gi, '')
-              .replace(/End\s*Date:.*$/gi, '')
-              .replace(/^Items:\s*/gi, '')
-              .trim();
-          };
+            const sanitize = (raw: string): string => {
+              return raw
+                .replace(/[\u00a0\s]+/g, ' ')
+                .replace(/BID\s*NO:.*?(?=Items:|Department|Quantity|Start|$)/gi, '')
+                .replace(/View\s*Corrigendum\/Representation/gi, '')
+                .trim();
+            };
 
-          return cardElements
-            .map((card: Element) => {
-              const rawText = card.textContent || card.innerHTML || '';
-              const text = rawText.replace(/[\u00a0\s]+/g, ' ').trim();
-              const lowerText = text.toLowerCase();
+            return elements
+              .map((el: Element) => {
+                const text = (el.textContent || '').replace(/[\u00a0\s]+/g, ' ').trim();
+                if (!text || text.length < 20) return null;
+                const lowerText = text.toLowerCase();
 
-              const bidIdMatch = text.match(/GEM\/\d+\/[A-Z]\/\d+/i) || text.match(/(?:GEM|CPPP|AP|TS|MH|UP)\d+/i) || text.match(/\d{6,10}/);
-              if (!bidIdMatch) return null;
-              const rawBidId = bidIdMatch[0];
-              const bidId = rawBidId.startsWith(portal) ? rawBidId : `${portal}/${rawBidId}`;
+                // 1. Precise Tender ID Matching
+                const bidIdMatch =
+                  text.match(/GEM\/\d{4}\/[A-Z]\/\d+/i) ||
+                  text.match(/(?:GEM|CPPP|AP|TS|MH|UP)\/\d{4}\/\d+/i) ||
+                  text.match(/TND\d{6,10}/i);
 
-              const isLikelyUnrelated = /(electrical|furniture|door|window|pipe|tyre|vehicle|camera|container|compactor|locker|medical|sanitation|construction|civil|catering|housekeeping|security guard|water|road|building|table|chair|soap|towel|garment|jacket|cable|battery|transformer|meter)/i.test(lowerText);
-              if (isLikelyUnrelated) return null;
+                if (!bidIdMatch) return null;
 
-              const link = card.querySelector('a[href*="showbidDocument"], a[href*="/bid/"], a[href*="tender"], a[href*="bid"], a') as HTMLAnchorElement | null;
-              const gemUrl = link?.href ? new URL(link.href, window.location.origin).href : window.location.href;
+                const rawId = bidIdMatch[0].trim();
+                const bidId = rawId.startsWith(portal) ? rawId : `${portal}/${rawId}`;
 
-              let itemCategory: string | null = null;
-              const itemMatch = text.match(/Items:\s*(.*?)(?=Quantity:|Department\s*Name|Start\s*Date:|End\s*Date:|$)/i);
-              if (itemMatch && itemMatch[1]) {
-                itemCategory = sanitize(itemMatch[1]);
-              }
+                // 2. Financial Amount Extraction (₹ amounts in Lakhs/Crores or raw numbers)
+                let value: number | null = null;
+                const lakhMatch = text.match(/(?:₹|rs\.?|INR)\s*([\d.,]+)\s*(lakh|lakhs|lac|lacs)/i);
+                const croreMatch = text.match(/(?:₹|rs\.?|INR)\s*([\d.,]+)\s*(crore|crores|cr)/i);
+                const rawRupeeMatch = text.match(/(?:₹|rs\.?|INR)\s*([\d,]{4,12})/i);
 
-              let deptText = '';
-              const deptMatch = text.match(/Department\s*Name\s*And\s*Address:\s*(.*?)(?=Start\s*Date:|End\s*Date:|$)/i);
-              if (deptMatch && deptMatch[1]) {
-                deptText = sanitize(deptMatch[1]);
-              }
-
-              let organisationName: string | null = null;
-              let departmentName: string | null = null;
-
-              if (deptText) {
-                const deptSplitMatch = deptText.match(/^(.+?)\s+(Department\s+of\s+.+?)$/i);
-                if (deptSplitMatch) {
-                  organisationName = deptSplitMatch[1].trim();
-                  departmentName = deptSplitMatch[2].trim();
-                } else {
-                  organisationName = deptText;
-                  departmentName = deptText;
+                if (croreMatch && croreMatch[1]) {
+                  const num = parseFloat(croreMatch[1].replace(/,/g, ''));
+                  if (!isNaN(num)) value = Number((num * 100).toFixed(2)); // Store in Lakhs
+                } else if (lakhMatch && lakhMatch[1]) {
+                  const num = parseFloat(lakhMatch[1].replace(/,/g, ''));
+                  if (!isNaN(num)) value = Number(num.toFixed(2));
+                } else if (rawRupeeMatch && rawRupeeMatch[1]) {
+                  const num = parseFloat(rawRupeeMatch[1].replace(/,/g, ''));
+                  if (!isNaN(num)) value = Number((num / 100000).toFixed(2));
                 }
-              }
 
-              const organisation = deptText || `${portal} Department`;
-              const title = itemCategory || sanitize(text.slice(0, 160)) || `${portal} Procurement Tender`;
+                // 3. Organization & Department Extraction
+                let organisation = `${portal} Procurement Department`;
+                const deptMatch = text.match(/(?:Department|Ministry|Org|Organisation)\s*(?:Name)?:\s*([^.\n\r]+)/i);
+                if (deptMatch && deptMatch[1]) {
+                  organisation = sanitize(deptMatch[1].slice(0, 100));
+                }
 
-              let bidOpeningDate: string | null = null;
-              const startMatch = text.match(/Start\s*Date:\s*(\d{2}-\d{2}-\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i);
-              if (startMatch) {
-                bidOpeningDate = startMatch[1].trim();
-              }
+                // 4. Dates Extraction
+                let closingDate: string | null = null;
+                const endMatch = text.match(/(?:End|Closing|Due)\s*Date:\s*(\d{2}[-/]\d{2}[-/]\d{4}\s*\d{0,2}:?\d{0,2})/i);
+                if (endMatch) closingDate = endMatch[1].trim();
 
-              let closingDate: string | null = null;
-              const endMatch = text.match(/End\s*Date:\s*(\d{2}-\d{2}-\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i);
-              if (endMatch) {
-                closingDate = endMatch[1].trim();
-              }
+                let bidOpeningDate: string | null = null;
+                const startMatch = text.match(/(?:Start|Opening)\s*Date:\s*(\d{2}[-/]\d{2}[-/]\d{4}\s*\d{0,2}:?\d{0,2})/i);
+                if (startMatch) bidOpeningDate = startMatch[1].trim();
 
-              const isMsme = /msme|mse\s*exemption:\s*yes|mse\s*relaxation/i.test(lowerText);
-              const isStartup = /startup|startup\s*exemption:\s*yes|startup\s*relaxation/i.test(lowerText);
+                // 5. Item / Title Extraction
+                let itemCategory: string | null = null;
+                const itemMatch = text.match(/(?:Items|Category|Work):\s*([^.\n\r]+)/i);
+                if (itemMatch && itemMatch[1]) {
+                  itemCategory = sanitize(itemMatch[1].slice(0, 120));
+                }
 
-              const relevantTerms = ['software', 'portal', 'website', 'mobile', 'application', 'it', 'digital', 'dashboard', 'management', 'automation', 'crm', 'saas', 'cyber', 'security', 'system', 'analytics', 'monitoring', 'gis', 'hrms', 'e-office', 'asset', 'inventory', 'fleet', 'tracking', 'document', 'workflow', 'service', 'provider', 'audit', 'solution', 'platform'];
-              const keywordText = kw.toLowerCase();
-              const relevantText = `${title.toLowerCase()} ${organisation.toLowerCase()} ${lowerText}`;
-              const hasKeywordMatch = keywordText.split(/\s+/).some((term) => term.length > 2 && relevantText.includes(term));
-              const hasRelevantTerm = relevantTerms.some((term) => relevantText.includes(term));
-              const isRelevant = hasKeywordMatch || hasRelevantTerm;
-              if (!isRelevant) return null;
+                const title = itemCategory || sanitize(text.slice(0, 140)) || `${portal} Tender`;
 
-              return {
-                bidId: bidId,
-                portal: portal as any,
-                title,
-                organisation,
-                departmentName,
-                organisationName,
-                itemCategory,
-                gemUrl,
-                value: null,
-                closingDate,
-                bidOpeningDate,
-                isMsme,
-                isStartup,
-                keyword: kw,
-              };
-            })
-            .filter(Boolean);
-        }, { kw: keyword, portal: portalType });
+                // 6. Tender URL
+                const link = el.querySelector('a[href*="bid"], a[href*="showbid"], a[href*="tender"], a') as HTMLAnchorElement | null;
+                const gemUrl = link?.href ? link.href : window.location.href;
+
+                // 7. MSME & Startup Exemption Flags
+                const isMsme = /msme|mse\s*exemption|mse\s*relaxation/i.test(lowerText);
+                const isStartup = /startup|startup\s*exemption|startup\s*relaxation/i.test(lowerText);
+
+                return {
+                  bidId,
+                  portal: portal as any,
+                  title,
+                  organisation,
+                  departmentName: organisation,
+                  organisationName: organisation,
+                  itemCategory,
+                  gemUrl,
+                  value,
+                  closingDate,
+                  bidOpeningDate,
+                  isMsme,
+                  isStartup,
+                  keyword: kw,
+                };
+              })
+              .filter(Boolean);
+          },
+          { kw: keyword, portal: portalType }
+        );
 
         let count = 0;
         for (const bid of bids as GemBid[]) {
@@ -206,9 +231,9 @@ export async function scrapeGemByKeywords(
           }
         }
 
-        console.log(`[Worker ${workerId}][${portalType}]  → ${count} new bids extracted for "${keyword}"`);
+        console.log(`[Worker ${workerId}][${portalType}]  → ${count} bids extracted for "${keyword}"`);
       } catch (err: any) {
-        console.error(`[Worker ${workerId}][${portalType}] Error scraping "${keyword}": ${err.message}`);
+        console.error(`[Worker ${workerId}][${portalType}] Error on "${keyword}": ${err.message}`);
       }
     }
   }
@@ -218,19 +243,22 @@ export async function scrapeGemByKeywords(
     const numWorkers = Math.min(CONCURRENCY, uniqueKeywords.length);
 
     for (let w = 1; w <= numWorkers; w++) {
-      const page = await browser.newPage();
+      const context = await browser.newContext({
+        userAgent: USER_AGENTS[(w - 1) % USER_AGENTS.length],
+        viewport: { width: 1280, height: 800 },
+      });
+      const page = await context.newPage();
       workerPromises.push(scrapeWorker(w, page));
     }
 
     await Promise.all(workerPromises);
   } finally {
-    await browser.close();
+    await browser.close().catch(() => {});
   }
 
   return allResults;
 }
 
-// Multi-portal master scraper function
 export async function scrapeMultiPortalsByKeywords(
   portals: PortalType[],
   keywords: string[],
@@ -247,7 +275,7 @@ export async function scrapeMultiPortalsByKeywords(
   const allPortalResults: GemBid[] = [];
 
   for (const portal of targetPortals) {
-    console.log(`\n=================== SCRAPING PORTAL: ${portal} ===================`);
+    console.log(`\n=== SCRAPING PORTAL: ${portal} ===`);
     const results = await scrapeGemByKeywords(keywords, onBidFound, onProgress, portal);
     allPortalResults.push(...results);
   }
@@ -255,7 +283,6 @@ export async function scrapeMultiPortalsByKeywords(
   return allPortalResults;
 }
 
-// Single keyword shortcut
 export async function scrapeGemByKeyword(keyword: string): Promise<GemBid[]> {
   return scrapeGemByKeywords([keyword]);
 }
