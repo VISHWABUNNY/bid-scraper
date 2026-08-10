@@ -22,6 +22,9 @@ model Bid {
   bidOpeningDate   String?  @map("bid_opening_date")
   isMsme           Boolean  @default(false) @map("is_msme")
   isStartup        Boolean  @default(false) @map("is_startup")
+  emdExempted      Boolean  @default(true) @map("emd_exempted")
+  verdict          String   @default("GO")
+  guidanceNotes    String?  @map("guidance_notes")
   keyword          String
   docText          String?  @map("doc_text")
   shortlisted      Boolean  @default(false)

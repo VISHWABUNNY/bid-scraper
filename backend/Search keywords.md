@@ -1,4 +1,4 @@
-Shortlist Criteria
+Shortlist Criteria:
 ✓IT-related project: software, web, mobile, AI, IT services
 ✓Estimated Bid Value ≤ ₹20,00,000 (2 lakh)
 ✓MSME / Startup EMD exemption mentioned
@@ -9,7 +9,7 @@ Shortlist Criteria
 ⚠Duplicate bid IDs are auto-skipped
 
 
-
+keywords:
 1	drone	           
 2	rfid	            
 3	asset	            

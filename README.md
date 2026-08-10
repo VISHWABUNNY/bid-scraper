@@ -221,3 +221,43 @@ cd frontend && npm run dev       # React Dashboard (Port 5173)
 
 ## License
 MIT
+
+
+
+
+🌐 How Tender247 Fetches Tender Data Under the Hood
+The Indian Government (GeM bidplus.gem.gov.in, CPPP eprocure.gov.in, and NIC State Portals) does NOT provide a public open developer JSON API. If you try to make direct HTTP requests (curl or standard fetch), the government Web Application Firewall (WAF) blocks it with a 403 Forbidden error.
+
+To bypass this and ingest thousands of tenders daily, Tender247 uses 3 Technical Data Channels:
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                      TENDER247 TECHNICAL DATA INGESTION PIPELINE                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                         │
+ ┌───────────────────────────────────────┼───────────────────────────────────────┐
+ │                                       │                                       │
+ ▼                                       ▼                                       ▼
+1. Browser-Authenticated          2. Internal AJAX / XML               3. B2B Commercial Data
+   Session Engine                    Endpoint Fetcher                    Feeds (XML/JSON)
+   (Bypasses WAF WAF 403)            (Gets raw JSON/HTML payload)       (NIC / TendersInfo feeds)
+Browser-Authenticated Session Engine: Tender247 runs background browser instances to solve initial WAF challenges, capture valid Session Cookies (PHPSESSID, CSRF tokens, Cloudflare clearances), and store them.
+Internal AJAX / XML Endpoint Fetching: Using the active browser session, Tender247 calls the internal search endpoints directly:
+GeM Endpoint: POST https://bidplus.gem.gov.in/all-bids with payload { searchBid: "software", page: 1 }
+CPPP Endpoint: POST https://eprocure.gov.in/eprocure/app?page=FrontEndTendersByDate This retrieves the raw tender data payloads instantly without loading heavy web graphics or rendering UI pages.
+B2B Procurement XML/JSON Data Feeds: Commercial aggregators also subscribe to official NIC daily tender dumps and B2B feeds (e.g., TendersInfo, DataGovIndia XML API) that publish daily tender notices across all 28 Indian states.
+🛠️ How We Will Implement Tender247's Engine in TenderIQ
+Instead of standard fragile web scraping, we will implement Browser-Session Authenticated Direct API Ingestion (directPortalFetcher.ts):
+
+Direct Session-Authenticated Endpoint Fetcher (directPortalFetcher.ts):
+
+Spawns a background browser context to initialize session headers & WAF cookies.
+Executes direct fetch() calls to GeM's internal AJAX endpoint (https://bidplus.gem.gov.in/all-bids) passing JSON payload queries (searchBid, page, status).
+Obtains raw tender payloads instantly (Bid ID, Department, Start Date, End Date, Tender Value, Document Link, EMD Exemption).
+Custom B2B / Open Data API Integration:
+
+Supports plugging in external tender data feeds (e.g. DataGovIndia API, NIC XML dumps, or third-party Tender APIs).
+Tender Management & Guidance Pipeline:
+
+Auto-extracts EMD Exemption rules (isMsme, isStartup).
+Calculates contract value eligibility (≤ ₹20 Lakhs).
+Generates automated Go / No-Go Tender Guidance.

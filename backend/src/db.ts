@@ -20,6 +20,9 @@ interface StoredBidRecord {
   bidOpeningDate: string | null;
   isMsme: boolean;
   isStartup: boolean;
+  emdExempted?: boolean;
+  verdict?: string;
+  guidanceNotes?: string | null;
   keyword: string;
   docText?: string | null;
   shortlisted: boolean;
@@ -67,7 +70,15 @@ function scheduleDiskPersist(bids: Record<string, StoredBidRecord>) {
   }, 300);
 }
 
-async function fallbackSaveBid(bid: GemBid & { shortlisted: boolean; docText?: string }) {
+async function fallbackSaveBid(
+  bid: GemBid & {
+    shortlisted: boolean;
+    verdict?: string;
+    guidanceNotes?: string;
+    emdExempted?: boolean;
+    docText?: string;
+  }
+) {
   const store = loadBidsFromDisk();
   const existing = store[bid.bidId];
   const record: StoredBidRecord = {
@@ -85,6 +96,9 @@ async function fallbackSaveBid(bid: GemBid & { shortlisted: boolean; docText?: s
     bidOpeningDate: bid.bidOpeningDate ?? null,
     isMsme: bid.isMsme,
     isStartup: bid.isStartup,
+    emdExempted: bid.emdExempted ?? true,
+    verdict: bid.verdict || 'GO',
+    guidanceNotes: bid.guidanceNotes ?? null,
     keyword: bid.keyword,
     docText: bid.docText ?? null,
     shortlisted: bid.shortlisted,
@@ -97,13 +111,24 @@ async function fallbackSaveBid(bid: GemBid & { shortlisted: boolean; docText?: s
   return record;
 }
 
-export async function saveBid(bid: GemBid & { shortlisted: boolean; docText?: string }) {
+export async function saveBid(
+  bid: GemBid & {
+    shortlisted: boolean;
+    verdict?: string;
+    guidanceNotes?: string;
+    emdExempted?: boolean;
+    docText?: string;
+  }
+) {
   try {
     await prisma.bid.upsert({
       where: { bidId: bid.bidId },
       update: {
         portal: bid.portal || 'GEM',
         shortlisted: bid.shortlisted,
+        verdict: bid.verdict || 'GO',
+        guidanceNotes: bid.guidanceNotes ?? null,
+        emdExempted: bid.emdExempted ?? true,
         docText: bid.docText ?? null,
         departmentName: bid.departmentName ?? null,
         organisationName: bid.organisationName ?? null,
@@ -124,12 +149,16 @@ export async function saveBid(bid: GemBid & { shortlisted: boolean; docText?: st
         bidOpeningDate: bid.bidOpeningDate ?? null,
         isMsme: bid.isMsme,
         isStartup: bid.isStartup,
+        emdExempted: bid.emdExempted ?? true,
+        verdict: bid.verdict || 'GO',
+        guidanceNotes: bid.guidanceNotes ?? null,
         keyword: bid.keyword,
         docText: bid.docText ?? null,
         shortlisted: bid.shortlisted,
       },
     });
-  } catch {
+  } catch (error) {
+    console.warn('[db] Prisma unavailable, falling back to JSON storage:', (error as Error).message);
     await fallbackSaveBid(bid);
   }
 }

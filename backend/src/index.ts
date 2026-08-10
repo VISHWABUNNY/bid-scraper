@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { scrapeGemByKeywords, scrapeMultiPortalsByKeywords, PortalType } from './scraper';
+import { fetchDirectPortalApi } from './directPortalFetcher';
+import { fetchExternalTenderFeeds } from './externalApiFetcher';
 import { evaluate } from './evaluator';
 import { saveBid, getShortlisted, clearAll } from './db';
 import { loadKeywords } from './keywords';
@@ -32,7 +34,7 @@ app.get('/progress', (_req, res) => {
   res.json({ success: true, progress: scrapeProgress });
 });
 
-// POST /run — trigger multi-portal scrape across keywords in background
+// POST /run — trigger Tender247-grade 3-channel data ingestion pipeline in background
 app.post('/run', async (req, res) => {
   try {
     if (scrapeProgress.isScraping) {
@@ -45,7 +47,7 @@ app.post('/run', async (req, res) => {
       : (['GEM', 'CPPP', 'AP', 'TS', 'MH', 'UP'].includes(portal) ? [portal as PortalType] : ['GEM']);
 
     const keywords = loadKeywords();
-    console.log(`Starting background scrape on portals [${selectedPortals.join(', ')}] for ${keywords.length} keywords...`);
+    console.log(`Starting Tender247 3-channel ingestion pipeline on portals [${selectedPortals.join(', ')}] for ${keywords.length} keywords...`);
 
     let totalScraped = 0;
     let shortlistedCount = 0;
@@ -67,39 +69,81 @@ app.post('/run', async (req, res) => {
       started: true,
       portals: selectedPortals,
       keywordsCount: keywords.length,
-      message: `Multi-portal scraper started for ${selectedPortals.join(', ')}`,
+      message: `Tender247 Ingestion Engine active for ${selectedPortals.join(', ')}`,
     });
 
-    // Execute background worker task asynchronously
+    // Execute background 3-channel ingestion pipeline asynchronously
     (async () => {
       try {
-        await scrapeMultiPortalsByKeywords(
-          selectedPortals,
-          keywords,
-          async (bid) => {
+        // Channel 1: Ingest B2B External Tender Feeds
+        const externalBids = await fetchExternalTenderFeeds(keywords);
+        for (const bid of externalBids) {
+          totalScraped++;
+          const evalRes = evaluate(bid);
+          await saveBid({
+            ...bid,
+            shortlisted: evalRes.shortlisted,
+            verdict: evalRes.verdict,
+            guidanceNotes: evalRes.guidanceNotes,
+            emdExempted: evalRes.emdExempted,
+          });
+          if (evalRes.shortlisted) shortlistedCount++;
+        }
+
+        // Channel 2 & 3: Direct Session API + Multi-Portal Browser Ingestion
+        for (const targetPortal of selectedPortals) {
+          // Direct WAF Session API Ingestion
+          await fetchDirectPortalApi(targetPortal, keywords, async (bid) => {
             totalScraped++;
-            const { shortlisted } = evaluate(bid);
-            await saveBid({ ...bid, shortlisted });
-            if (shortlisted) shortlistedCount++;
+            const evalRes = evaluate(bid);
+            await saveBid({
+              ...bid,
+              shortlisted: evalRes.shortlisted,
+              verdict: evalRes.verdict,
+              guidanceNotes: evalRes.guidanceNotes,
+              emdExempted: evalRes.emdExempted,
+            });
+            if (evalRes.shortlisted) shortlistedCount++;
 
             scrapeProgress.totalScraped = totalScraped;
             scrapeProgress.shortlistedCount = shortlistedCount;
-          },
-          (info) => {
-            scrapeProgress.currentKeyword = info.currentKeyword;
-            scrapeProgress.currentIndex = info.currentIndex;
-            scrapeProgress.totalKeywords = info.totalKeywords;
-            scrapeProgress.remainingKeywords = info.remainingKeywords;
-            if (info.currentPortal) scrapeProgress.currentPortal = info.currentPortal;
-          }
-        );
+          });
+
+          // Multi-Worker In-Browser Page Fetching
+          await scrapeMultiPortalsByKeywords(
+            [targetPortal],
+            keywords,
+            async (bid) => {
+              totalScraped++;
+              const evalRes = evaluate(bid);
+              await saveBid({
+                ...bid,
+                shortlisted: evalRes.shortlisted,
+                verdict: evalRes.verdict,
+                guidanceNotes: evalRes.guidanceNotes,
+                emdExempted: evalRes.emdExempted,
+              });
+              if (evalRes.shortlisted) shortlistedCount++;
+
+              scrapeProgress.totalScraped = totalScraped;
+              scrapeProgress.shortlistedCount = shortlistedCount;
+            },
+            (info) => {
+              scrapeProgress.currentKeyword = info.currentKeyword;
+              scrapeProgress.currentIndex = info.currentIndex;
+              scrapeProgress.totalKeywords = info.totalKeywords;
+              scrapeProgress.remainingKeywords = info.remainingKeywords;
+              if (info.currentPortal) scrapeProgress.currentPortal = info.currentPortal;
+            }
+          );
+        }
       } catch (err: any) {
-        console.error('Background multi-portal scraper error:', err.message);
+        console.error('Background Tender247 ingestion engine error:', err.message);
       } finally {
         scrapeProgress.isScraping = false;
         scrapeProgress.currentKeyword = '';
         scrapeProgress.remainingKeywords = 0;
-        console.log(`Multi-portal scrape finished — total: ${totalScraped}, shortlisted: ${shortlistedCount}`);
+        console.log(`Tender247 ingestion pipeline finished — total: ${totalScraped}, shortlisted: ${shortlistedCount}`);
       }
     })();
   } catch (err: any) {
