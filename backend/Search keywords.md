@@ -1,8 +1,8 @@
 Shortlist Criteria:
 ✓IT-related project: software, web, mobile, AI, IT services
 ✓Estimated Bid Value ≤ ₹20,00,000 (2 lakh)
-✓MSME / Startup EMD exemption mentioned
-✓MSE Relaxation for Years of Experience & Turnover
+✓MSME / Startup EMD exemption mentioned only
+✓MSE Relaxation for Years of Experience & Turnover only
 ✓Startup Relaxation for Years of Experience & Turnover
 ✗Reject non-IT: construction, supply, electrical, civil
 ★Rating > 8/10 → category saved for future scraping

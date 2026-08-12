@@ -127,15 +127,28 @@ export interface EvaluationResult {
 
 export function evaluate(bid: {
   title: string;
+  itemCategory?: string | null;
+  organisation?: string;
+  departmentName?: string | null;
   value: number | null;
   isMsme: boolean;
   isStartup: boolean;
+  keyword?: string;
 }): EvaluationResult {
-  const text = bid.title.toLowerCase();
+  const effectiveText = [
+    bid.title,
+    bid.itemCategory || '',
+    bid.departmentName || '',
+    bid.organisation || '',
+    bid.keyword || '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
 
   // 1. Hard Physical Product & Non-IT Rejection
-  const hasHardwareReject = HARDWARE_PHYSICAL_REJECT_KEYWORDS.some((kw) => text.includes(kw));
-  if (hasHardwareReject && !/software|web portal|mobile app|digital platform/i.test(text)) {
+  const hasHardwareReject = HARDWARE_PHYSICAL_REJECT_KEYWORDS.some((kw) => effectiveText.includes(kw));
+  if (hasHardwareReject && !/software|software development|web portal|web application|web app|mobile app|digital platform|digital portal|analytics dashboard|management software|e-governance|e governance/i.test(effectiveText)) {
     return {
       shortlisted: false,
       verdict: 'NO_GO',
@@ -148,7 +161,7 @@ export function evaluate(bid: {
   }
 
   // 2. Verified IT / Software Category Check
-  const matchingITTerms = IT_SOFTWARE_KEYWORDS.filter((kw) => text.includes(kw));
+  const matchingITTerms = IT_SOFTWARE_KEYWORDS.filter((kw) => effectiveText.includes(kw));
   const isITSoftware = matchingITTerms.length > 0;
   if (!isITSoftware) {
     return {
@@ -161,6 +174,8 @@ export function evaluate(bid: {
       guidanceNotes: 'Disqualified: Does not match IT software, mobile app, or digital platform scope.',
     };
   }
+
+  const hasRelaxation = bid.isMsme || bid.isStartup;
 
   // 3. Budget Cap Check (≤ ₹20 Lakhs)
   if (bid.value !== null) {
@@ -178,27 +193,38 @@ export function evaluate(bid: {
     }
   }
 
-  // 4. Calculate Shortlist Score & Tender Guidance
-  let score = 8.0;
-  const isEmdExempt = bid.isMsme || bid.isStartup || true; // MSME/Startup EMD exemption
+  // 4. Calculate candidate score & tender guidance
+  let score = 7.0;
   if (bid.isMsme) score += 0.5;
   if (bid.isStartup) score += 0.5;
   if (matchingITTerms.length >= 2) score += 0.5;
   if (bid.value !== null && bid.value <= MAX_VALUE_RUPEES) score += 0.5;
 
   const finalScore = Math.min(10.0, Number(score.toFixed(1)));
-  const verdict: 'GO' | 'REVIEW' = finalScore >= 8.0 ? 'GO' : 'REVIEW';
-  const verdictBadge = verdict === 'GO' ? '🟢 GO FOR BIDDING' : '🟡 MANUAL REVIEW';
 
-  const guidanceNotes = `Tender Guidance: Verified IT Software lead. EMD Exemption: ${isEmdExempt ? 'YES (MSME / Startup)' : 'NO'}. Value: ${bid.value ? `₹${bid.value}L` : 'Undisclosed'}. Recommended for proposal submission.`;
+  if (!hasRelaxation) {
+    return {
+      shortlisted: false,
+      verdict: 'REVIEW',
+      verdictBadge: '🟡 MANUAL REVIEW',
+      emdExempted: false,
+      score: finalScore,
+      reason: 'Review: Missing explicit MSME or Startup relaxation in the tender notice',
+      guidanceNotes: `Tender Guidance: IT software candidate requiring manual review. Value: ${bid.value ? `₹${bid.value}L` : 'Undisclosed'}.`,
+    };
+  }
+
+  const verdict: 'GO' = 'GO';
+  const verdictBadge = '🟢 GO FOR BIDDING';
+  const guidanceNotes = `Tender Guidance: Verified IT Software lead. EMD Exemption: YES (MSME / Startup). Value: ${bid.value ? `₹${bid.value}L` : 'Undisclosed'}. Recommended for proposal submission.`;
 
   return {
     shortlisted: true,
     verdict,
     verdictBadge,
-    emdExempted: isEmdExempt,
+    emdExempted: true,
     score: finalScore,
-    reason: `Passes criteria (${finalScore}/10.0) — Verified IT Software Domain${bid.isMsme || bid.isStartup ? ' + MSME/Startup Eligible' : ''}`,
+    reason: `Passes criteria (${finalScore}/10.0) — Verified IT Software Domain + MSME/Startup Eligible`,
     guidanceNotes,
   };
 }

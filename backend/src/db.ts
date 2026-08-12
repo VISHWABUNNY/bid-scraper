@@ -180,6 +180,23 @@ export async function getShortlisted(portal?: string) {
   }
 }
 
+export async function getReviewCandidates(portal?: string) {
+  try {
+    const whereClause: any = { verdict: 'REVIEW' };
+    if (portal && portal !== 'ALL') {
+      whereClause.portal = portal;
+    }
+    return await prisma.bid.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+    });
+  } catch {
+    return Object.values(loadBidsFromDisk())
+      .filter((bid) => bid.verdict === 'REVIEW' && (!portal || portal === 'ALL' || (bid.portal || 'GEM') === portal))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+}
+
 export async function clearAll() {
   try {
     await prisma.bid.deleteMany();

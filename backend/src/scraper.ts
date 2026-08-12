@@ -1,4 +1,5 @@
 import { chromium, Browser, Page } from 'playwright';
+import * as pdfParse from 'pdf-parse';
 
 export type PortalType = 'GEM' | 'CPPP' | 'AP' | 'TS' | 'MH' | 'UP';
 
@@ -16,6 +17,8 @@ export interface GemBid {
   bidOpeningDate: string | null;
   isMsme: boolean;
   isStartup: boolean;
+  emdExempted?: boolean;
+  guidanceNotes?: string | null;
   keyword: string;
 }
 
@@ -190,8 +193,25 @@ export async function scrapeGemByKeywords(
                 const title = itemCategory || sanitize(text.slice(0, 140)) || `${portal} Tender`;
 
                 // 6. Tender URL
-                const link = el.querySelector('a[href*="bid"], a[href*="showbid"], a[href*="tender"], a') as HTMLAnchorElement | null;
-                const gemUrl = link?.href ? link.href : window.location.href;
+                // Prefer anchors that look like a direct tender/document link
+                const anchors = Array.from(el.querySelectorAll('a')) as HTMLAnchorElement[];
+                const preferred = anchors.find(a => /showbiddocument|showbid|showBidDocument|showBid|viewbid|viewBid|viewTender|showTender|tenderId=|tenderId|bidId|showBidDocument/i.test(a.href || a.getAttribute('onclick') || ''))
+                  || anchors.find(a => /\d{5,}/.test(a.href || ''))
+                  || anchors.find(a => (a.getAttribute('onclick') || '').match(/https?:\/\//));
+
+                let gemUrl = preferred?.href || window.location.href;
+
+                // If no preferred link was found, try extracting a URL from onclick handlers
+                if (!preferred && anchors.length > 0) {
+                  for (const a of anchors) {
+                    const onclick = a.getAttribute('onclick') || '';
+                    const m = onclick.match(/(https?:\/\/[^'"\s]+)/);
+                    if (m) {
+                      gemUrl = m[1];
+                      break;
+                    }
+                  }
+                }
 
                 // 7. MSME & Startup Exemption Flags
                 const isMsme = /msme|mse\s*exemption|mse\s*relaxation/i.test(lowerText);
@@ -220,14 +240,84 @@ export async function scrapeGemByKeywords(
         );
 
         let count = 0;
-        for (const bid of bids as GemBid[]) {
-          if (bid?.bidId && !seenIds.has(bid.bidId)) {
-            seenIds.add(bid.bidId);
-            allResults.push(bid);
-            count++;
-            if (onBidFound) {
-              await onBidFound(bid);
+        for (const bidObj of bids as GemBid[]) {
+          try {
+            const bid = { ...bidObj } as GemBid & { emdExempted?: boolean; guidanceNotes?: string | null };
+
+            // Attempt to fetch the detailed tender page to extract EMD / MSME / Startup mentions
+            try {
+              const detailPage = await page.context().newPage();
+              let detailText = '';
+
+              try {
+                const resp = await detailPage.goto(bid.gemUrl, { waitUntil: 'domcontentloaded', timeout: 8000 });
+                const contentType = resp && typeof resp.headers === 'function' ? (resp.headers()['content-type'] || '') : (resp?.headers?.['content-type'] || '');
+                
+                // Check if response is a PDF
+                const isPdf = /application\/pdf/i.test(contentType || '') || /\.pdf(\?|$)/i.test(bid.gemUrl || '');
+                
+                if (isPdf) {
+                  // Download and parse PDF
+                  try {
+                    const pdfResp = await fetch(bid.gemUrl);
+                    if (pdfResp.ok) {
+                      const buffer = await pdfResp.arrayBuffer();
+                      const pdfData = await pdfParse(Buffer.from(buffer));
+                      detailText = pdfData.text || '';
+                    }
+                  } catch (pdfErr) {
+                    // PDF parsing failed, continue without detail text
+                  }
+                } else {
+                  // Try to extract HTML text
+                  try {
+                    detailText = (await detailPage.evaluate(() => document.body?.innerText || '')) || '';
+                  } catch (e) {
+                    // Evaluation failed
+                  }
+                }
+              } catch (navErr) {
+                // Navigation failed, try to extract whatever we can
+              }
+
+              const lower = (detailText || '').toLowerCase();
+
+              // EMD / Earnest Money detection
+              const emdExempt = /emd[^\n]{0,120}?(exempt|waiv|waived|not required|nil|zero|0)\b/i.test(lower) || 
+                                /earnest money[^\n]{0,120}?(exempt|waiv|waived|not required|nil|zero|0)\b/i.test(lower) ||
+                                /earnest money deposit[^\n]{0,120}?(exempt|waiv|waived|not required|nil|zero|0)\b/i.test(lower) ||
+                                /emd not (required|applicable)\b/i.test(lower);
+              bid.emdExempted = Boolean(emdExempt);
+
+              // Re-evaluate MSME / Startup flags on detail page (higher confidence)
+              const msmeMatch = /msme|mse\s*exemption|mse\s*relaxation|micro\s*small\s*and\s*medium|\bmse\b|\bmsme\b/i.test(lower);
+              const startupMatch = /startup|startup\s*exemption|startup\s*relaxation|dpiit|startup india/i.test(lower);
+              bid.isMsme = bid.isMsme || msmeMatch;
+              bid.isStartup = bid.isStartup || startupMatch;
+
+              // Build guidance notes if present
+              const notes: string[] = [];
+              if (bid.isMsme) notes.push('MSME eligible');
+              if (bid.isStartup) notes.push('Startup eligible');
+              if (bid.emdExempted) notes.push('EMD exemption indicated');
+              bid.guidanceNotes = notes.length ? `Tender Guidance: ${notes.join('. ')}.` : bid.guidanceNotes ?? null;
+
+              await detailPage.close().catch(() => {});
+            } catch (err) {
+              // ignore detail fetch errors
             }
+
+            if (bid?.bidId && !seenIds.has(bid.bidId)) {
+              seenIds.add(bid.bidId);
+              allResults.push(bid);
+              count++;
+              if (onBidFound) {
+                await onBidFound(bid);
+              }
+            }
+          } catch (err: any) {
+            console.warn('[scraper] failed processing bid object:', err?.message || err);
+            continue;
           }
         }
 

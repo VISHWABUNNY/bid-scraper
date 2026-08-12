@@ -23,12 +23,23 @@ describe('Shortlist Evaluator', () => {
     expect(res.score).toBeGreaterThanOrEqual(8.0);
   });
 
-  it('shortlists IT project containing contextual supply term', () => {
+  it('rejects IT project without MSE or Startup relaxation', () => {
     const res = evaluate({
       title: 'Supply and Implementation of Asset Tracking Management Software',
       value: 12,
       isMsme: false,
       isStartup: false,
+    });
+    expect(res.shortlisted).toBe(false);
+    expect(res.reason).toContain('Missing MSE or Startup relaxation');
+  });
+
+  it('shortlists valid IT project with startup relaxation', () => {
+    const res = evaluate({
+      title: 'Supply and Implementation of Asset Tracking Management Software',
+      value: 12,
+      isMsme: false,
+      isStartup: true,
     });
     expect(res.shortlisted).toBe(true);
     expect(res.score).toBeGreaterThanOrEqual(8.0);
